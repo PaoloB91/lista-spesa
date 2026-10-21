@@ -445,6 +445,20 @@ details.archivio[open] summary svg.i{transform:rotate(180deg)}
 .biglietto.grande .s{color:#5a5245}
 .copia{display:flex;align-items:center;justify-content:center;gap:10px;margin:0 auto 20px}
 
+/* ---------- fotocamera ---------- */
+#ce-campo-scansione .bottone + .bottone{margin-top:12px}
+.schermo.camera{background:#000;background-image:none;overflow:hidden;animation:none}
+.schermo.camera video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.mirino{
+  position:absolute;left:8%;right:8%;top:38%;height:22%;border:4px solid var(--giallo);border-radius:14px;
+  box-shadow:0 0 0 2000px rgba(0,0,0,.45), 5px 5px 0 var(--rosso);
+}
+.mirino i{position:absolute;left:6%;right:6%;top:50%;height:3px;background:var(--rosso);box-shadow:0 0 8px var(--rosso);animation:scansione 1.6s ease-in-out infinite alternate}
+@keyframes scansione{from{transform:translateY(-34px)}to{transform:translateY(34px)}}
+.cam-nuvola{position:absolute;left:0;right:0;top:calc(18px + var(--safe-t));text-align:center;padding:0 20px}
+.cam-nuvola .nuvola{font-size:24px;padding:16px 22px}
+.cam-annulla{position:absolute;left:24px;right:24px;bottom:calc(26px + var(--safe-b));width:auto;background:#fff;color:var(--nero);border-color:var(--nero)}
+
 /* ---------- chi sei ---------- */
 .schermo.chi{
   background-color:var(--giallo);background-image:radial-gradient(rgba(228,0,43,.4) 1.8px, transparent 2.4px);background-size:11px 11px;
@@ -590,26 +604,38 @@ details.archivio[open] summary svg.i{transform:rotate(180deg)}
     <div class="campo"><span class="etichetta">Supermercato</span><div class="scelte" id="ce-catene"></div></div>
     <label class="campo"><span class="etichetta">Nome della carta</span><input type="text" id="ce-nome" autocomplete="off"></label>
     <label class="campo"><span class="etichetta">Di chi è</span><input type="text" id="ce-titolare" placeholder="Paolo, Silvia..." autocomplete="off"></label>
-    <div class="campo"><span class="etichetta">Come si mostra alla cassa</span><div class="scelte" id="ce-formati"></div></div>
+    <div class="campo" id="ce-campo-scansione"><span class="etichetta">Leggi la tessera</span>
+      <button type="button" class="bottone giallo" id="ce-scansiona">
+        <svg class="i" viewBox="0 0 24 24"><path d="M3 7V4h3M18 4h3v3M21 17v3h-3M6 20H3v-3M7 8v8M10 8v8M13 8v8M16 8v8"/></svg>Inquadra il codice a barre</button>
+      <button type="button" class="bottone piccolo" id="ce-da-foto">
+        <svg class="i" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>Leggilo da una foto</button>
+      <input type="file" id="ce-foto" accept="image/*" hidden>
+      <p class="aiuto">L'app legge il codice a barre della tessera e lo ridisegna pulito, così alla cassa passa al primo colpo. Tiene anche la foto della tessera.</p>
+    </div>
     <label class="campo" id="ce-campo-numero"><span class="etichetta">Numero sotto il codice a barre</span>
       <input type="text" id="ce-numero" inputmode="numeric" autocomplete="off" autocapitalize="off" spellcheck="false">
       <div class="anteprima-codice" id="ce-anteprima"></div>
     </label>
-    <div class="campo"><span class="etichetta">Foto della tessera</span>
+    <div class="campo"><span class="etichetta">Come si mostra alla cassa</span><div class="scelte" id="ce-formati"></div></div>
+    <div class="campo" id="ce-campo-foto" hidden><span class="etichetta">Foto della tessera</span>
       <div class="foto-box">
-        <img id="ce-foto-img" alt="Foto della tessera" hidden>
+        <img id="ce-foto-img" alt="Foto della tessera">
         <div class="bottoni">
-          <button type="button" class="bottone piccolo" id="ce-foto-scatta">
-            <svg class="i" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>Fotografa</button>
-          <button type="button" class="bottone piccolo" id="ce-foto-togli" hidden>Togli la foto</button>
+          <button type="button" class="bottone piccolo" id="ce-foto-togli">Togli la foto</button>
         </div>
       </div>
-      <input type="file" id="ce-foto" accept="image/*" hidden>
-      <p class="aiuto">Utile se il codice a barre non passa o se la tessera ha un QR.</p>
     </div>
     <label class="campo"><span class="etichetta">Note</span><textarea id="ce-note"></textarea></label>
     <button class="bottone rosso elimina" id="ce-elimina" hidden>Elimina la carta</button>
   </div>
+</section>
+
+<!-- FOTOCAMERA PER LEGGERE IL CODICE -->
+<section class="schermo camera" id="s-camera" hidden>
+  <video id="cam-video" playsinline muted autoplay></video>
+  <div class="mirino"><i></i></div>
+  <div class="cam-nuvola"><div class="nuvola">Inquadra il codice!<small>Tessera ferma e dritta, a una spanna dal telefono. Lo leggo da solo.</small></div></div>
+  <button class="bottone cam-annulla" id="cam-annulla">Annulla</button>
 </section>
 
 <!-- COUPON: DETTAGLIO -->
@@ -1200,6 +1226,239 @@ function codiceABarre(codice, formato){
 }
 /* BARCODE-FINE */
 
+/* =====================================================================
+   LETTORE DI CODICI A BARRE (da fotocamera o foto)
+   Su iPhone le pagine web non hanno un lettore pronto: questo legge EAN-13,
+   EAN-8 e Code 128 passando righe orizzontali e verticali sull'immagine.
+   Un risultato vale solo se lo stesso codice esce da almeno due righe.
+   ===================================================================== */
+/* DECODER-INIZIO */
+function larghezzeDaBit(s){
+  const w = [];
+  let c = 1;
+  for(let i = 1; i <= s.length; i++){
+    if(i < s.length && s[i] === s[i - 1]) c++;
+    else{ w.push(c); c = 1; }
+  }
+  return w;
+}
+const EAN_L_W = EAN_L.map(larghezzeDaBit), EAN_G_W = EAN_G.map(larghezzeDaBit), EAN_R_W = EAN_R.map(larghezzeDaBit);
+const C128_W = C128.map(s => s.split("").map(Number));
+
+/* Scarto fra larghezze lette e modello, portate alla stessa scala. Conta soprattutto la somma
+   di due elementi vicini (barra + spazio): nelle foto le barre si allargano a spese degli spazi,
+   ma la distanza fra due bordi uguali resta giusta. Le larghezze singole servono solo a
+   distinguere le cifre che hanno le stesse somme (1 e 7, 2 e 8 negli EAN). */
+function scarto(w, i, modello, moduli){
+  let somma = 0;
+  for(let k = 0; k < modello.length; k++) somma += w[i + k];
+  const u = somma / moduli;
+  let singole = 0, coppie = 0;
+  for(let k = 0; k < modello.length; k++){
+    singole += Math.abs(w[i + k] / u - modello[k]);
+    if(k) coppie += Math.abs((w[i + k - 1] + w[i + k]) / u - (modello[k - 1] + modello[k]));
+  }
+  return coppie + 0.3 * singole;
+}
+function migliore(w, i, modelli, moduli){
+  let best = -1, be = 1e9;
+  for(let d = 0; d < modelli.length; d++){
+    const e = scarto(w, i, modelli[d], moduli);
+    if(e < be){ be = e; best = d; }
+  }
+  return {d:best, e:be};
+}
+function quieteOk(w, i, u){ return i === 0 || w[i - 1] >= 5 * u; }
+
+/* w: larghezze alternate, w[0] e' una barra scura */
+function leggiEAN13(w, i){
+  if(i + 59 > w.length) return null;
+  const u = (w[i] + w[i + 1] + w[i + 2]) / 3;
+  if(!quieteOk(w, i, u)) return null;
+  if(scarto(w, i, [1, 1, 1], 3) > 0.9) return null;
+  let parita = "", cifre = "", j = i + 3;
+  for(let n = 0; n < 6; n++, j += 4){
+    const l = migliore(w, j, EAN_L_W, 7), g = migliore(w, j, EAN_G_W, 7);
+    const m = l.e <= g.e ? l : g;
+    if(m.e > 1.5) return null;
+    parita += l.e <= g.e ? "L" : "G";
+    cifre += m.d;
+  }
+  if(scarto(w, j, [1, 1, 1, 1, 1], 5) > 1.4) return null;
+  j += 5;
+  for(let n = 0; n < 6; n++, j += 4){
+    const r = migliore(w, j, EAN_R_W, 7);
+    if(r.e > 1.5) return null;
+    cifre += r.d;
+  }
+  if(scarto(w, j, [1, 1, 1], 3) > 0.9) return null;
+  const primo = EAN_PARITA.indexOf(parita);
+  if(primo < 0) return null;
+  const codice = primo + cifre;
+  return eanValido(codice) ? {testo:codice, formato:"ean13"} : null;
+}
+function leggiEAN8(w, i){
+  if(i + 43 > w.length) return null;
+  const u = (w[i] + w[i + 1] + w[i + 2]) / 3;
+  if(!quieteOk(w, i, u)) return null;
+  if(scarto(w, i, [1, 1, 1], 3) > 0.9) return null;
+  let cifre = "", j = i + 3;
+  for(let n = 0; n < 4; n++, j += 4){
+    const l = migliore(w, j, EAN_L_W, 7);
+    if(l.e > 1.5) return null;
+    cifre += l.d;
+  }
+  if(scarto(w, j, [1, 1, 1, 1, 1], 5) > 1.4) return null;
+  j += 5;
+  for(let n = 0; n < 4; n++, j += 4){
+    const r = migliore(w, j, EAN_R_W, 7);
+    if(r.e > 1.5) return null;
+    cifre += r.d;
+  }
+  if(scarto(w, j, [1, 1, 1], 3) > 0.9) return null;
+  return eanValido(cifre) ? {testo:cifre, formato:"ean8"} : null;
+}
+function testoCode128(v){
+  let set = v[0] === 103 ? "A" : v[0] === 104 ? "B" : "C", out = "", cambio = false;
+  for(let k = 1; k < v.length; k++){
+    const x = v[k];
+    const s = cambio ? (set === "A" ? "B" : "A") : set;
+    cambio = false;
+    if(s === "C"){
+      if(x < 100) out += String(x).padStart(2, "0");
+      else if(x === 100) set = "B";
+      else if(x === 101) set = "A";
+    }else{
+      if(x < 96){ const c = s === "B" ? x + 32 : (x < 64 ? x + 32 : x - 64); if(c >= 32) out += String.fromCharCode(c); }
+      else if(x === 98) cambio = true;
+      else if(x === 99) set = "C";
+      else if(x === 100 && s === "A") set = "B";
+      else if(x === 101 && s === "B") set = "A";
+    }
+  }
+  return out;
+}
+function leggiCode128(w, i){
+  if(i + 6 + 6 + 7 > w.length) return null;
+  const inizio = migliore(w, i, [C128_W[103], C128_W[104], C128_W[105]], 11);
+  if(inizio.e > 1.6) return null;
+  let u = 0;
+  for(let k = 0; k < 6; k++) u += w[i + k];
+  u /= 11;
+  if(!quieteOk(w, i, u)) return null;
+  const v = [103 + inizio.d];
+  let j = i + 6;
+  while(j + 7 <= w.length){
+    if(scarto(w, j, C128_W[106], 13) < 1.8 && v.length >= 3){
+      const controllo = v.pop();
+      let somma = v[0];
+      for(let k = 1; k < v.length; k++) somma += v[k] * k;
+      if(somma % 103 !== controllo) return null;
+      const testo = testoCode128(v);
+      return testo ? {testo, formato:"code128"} : null;
+    }
+    const s = migliore(w, j, C128_W.slice(0, 106), 11);
+    if(s.e > 1.8 || s.d >= 103) return null;
+    v.push(s.d);
+    j += 6;
+    if(v.length > 60) return null;
+  }
+  return null;
+}
+function leggiLarghezze(w){
+  for(let i = 0; i < w.length; i += 2){
+    const r = leggiEAN13(w, i) || leggiCode128(w, i) || leggiEAN8(w, i);
+    if(r) return r;
+  }
+  return null;
+}
+/* da una riga di luminosita' alle larghezze, con due soglie: una per tutta la riga e una locale (luce non uniforme) */
+function larghezzeRiga(riga){
+  const n = riga.length, out = [];
+  const isto = new Uint32Array(256);
+  for(let i = 0; i < n; i++) isto[riga[i]]++;
+  let acc = 0, lo = 0, hi = 255;
+  for(let v = 0; v < 256; v++){ acc += isto[v]; if(acc >= n * 0.05){ lo = v; break; } }
+  acc = 0;
+  for(let v = 255; v >= 0; v--){ acc += isto[v]; if(acc >= n * 0.05){ hi = v; break; } }
+  if(hi - lo < 35) return out;
+  const pref = new Float64Array(n + 1);
+  for(let i = 0; i < n; i++) pref[i + 1] = pref[i] + riga[i];
+  const fin = Math.max(12, Math.round(n / 12));
+  const soglie = [
+    () => (lo + hi) / 2,
+    i => { const a = Math.max(0, i - fin), b = Math.min(n, i + fin); return pref[b] - pref[a] > 0 ? (pref[b] - pref[a]) / (b - a) - 2 : 0; }
+  ];
+  for(const soglia of soglie){
+    /* il bordo fra due pixel si colloca a frazioni di pixel, interpolando dove la luce passa la soglia:
+       con barre di due pixel o meno fa la differenza */
+    const w = [];
+    let scuro = riga[0] < soglia(0), primo = scuro, ultimo = 0;
+    for(let i = 1; i < n; i++){
+      const t = soglia(i);
+      const d = riga[i] < t;
+      if(d !== scuro){
+        const a = riga[i - 1], b = riga[i];
+        const bordo = (i - 1) + (a === b ? 0.5 : Math.min(1, Math.max(0, (t - a) / (b - a))));
+        w.push(bordo - ultimo);
+        ultimo = bordo;
+        scuro = d;
+      }
+    }
+    w.push(n - ultimo);
+    if(!primo) w.shift();          // si parte sempre da una barra scura
+    out.push(w);
+  }
+  return out;
+}
+function leggiCodice(img){
+  const {width:W, height:H, data} = img;
+  const lum = new Uint8Array(W * H);
+  for(let p = 0, q = 0; p < lum.length; p++, q += 4) lum[p] = (data[q] * 77 + data[q + 1] * 150 + data[q + 2] * 29) >> 8;
+  const voti = new Map();
+  const conta = r => {
+    if(!r) return null;
+    const k = r.formato + ":" + r.testo;
+    const n = (voti.get(k) || 0) + 1;
+    voti.set(k, n);
+    return n >= 2 ? r : null;
+  };
+  const prova = riga => {
+    for(const w of larghezzeRiga(riga)){
+      const r = conta(leggiLarghezze(w));
+      if(r) return r;
+      /* tessera capovolta: si legge la riga al contrario */
+      const inv = w.slice().reverse();
+      if(w.length % 2 === 0) inv.shift();   // anche al contrario si deve partire da una barra scura
+      const r2 = conta(leggiLarghezze(inv));
+      if(r2) return r2;
+    }
+    return null;
+  };
+  /* ogni riga e' la media di cinque righe vicine: le barre sono lunghe, il rumore della foto no */
+  const MEDIA = 2;
+  const riga = y => {
+    const out = new Uint8Array(W), a = Math.max(0, y - MEDIA), b = Math.min(H - 1, y + MEDIA);
+    for(let x = 0; x < W; x++){ let s = 0; for(let yy = a; yy <= b; yy++) s += lum[yy * W + x]; out[x] = s / (b - a + 1); }
+    return out;
+  };
+  const colonna = x => {
+    const out = new Uint8Array(H), a = Math.max(0, x - MEDIA), b = Math.min(W - 1, x + MEDIA);
+    for(let y = 0; y < H; y++){ let s = 0; for(let xx = a; xx <= b; xx++) s += lum[y * W + xx]; out[y] = s / (b - a + 1); }
+    return out;
+  };
+  const RIGHE = 28;
+  for(let k = 0; k < RIGHE; k++){
+    const f = 0.5 + (k % 2 ? 1 : -1) * Math.ceil(k / 2) / (RIGHE + 2);   // dal centro verso i bordi
+    const r = prova(riga(Math.round(f * (H - 1))));
+    if(r) return r;
+    const r2 = prova(colonna(Math.round(f * (W - 1))));
+    if(r2) return r2;
+  }
+  return null;
+}
+/* DECODER-FINE */
+
 /* ogni modulo occupa un numero intero di pixel fisici: barre nette, che le casse leggono */
 function adattaCodici(contenitore){
   contenitore.querySelectorAll("svg[data-moduli]").forEach(svg => {
@@ -1250,7 +1509,10 @@ function renderDettaglioCarta(){
         <div class="luce">${ICONA.sole}Alza la luminosità</div>`;
     }
   }
-  if(c.foto) html += `<img class="foto-grande" src="${esc(c.foto)}" alt="Foto della tessera">`;
+  if(c.foto){
+    if(!html) html += `<div class="luce">${ICONA.sole}Mostra la foto alla cassa, luminosità al massimo</div>`;
+    html += `<img class="foto-grande" src="${esc(c.foto)}" alt="Foto della tessera">`;
+  }
   if(!html) html = `<div class="vuoto"><div class="nuvola">Manca il numero!<small>Tocca Modifica e scrivi il numero stampato sotto il codice a barre, oppure fotografa la tessera.</small></div></div>`;
   if(c.titolare) html += `<p class="meta" style="text-align:center">Intestata a ${esc(c.titolare)}</p>`;
   if(c.note) html += `<div class="nota-dettaglio">${esc(c.note)}</div>`;
@@ -1288,9 +1550,80 @@ function apriModificaCarta(c){
 }
 function aggiornaFotoCarta(){
   const img = $("#ce-foto-img");
-  img.hidden = !stato.edit.foto;
+  $("#ce-campo-foto").hidden = !stato.edit.foto;
   if(stato.edit.foto) img.src = stato.edit.foto; else img.removeAttribute("src");
-  $("#ce-foto-togli").hidden = !stato.edit.foto;
+}
+
+/* codice letto dalla fotocamera o da una foto: si scrive il numero e si sceglie il formato giusto */
+function codiceLetto(r){
+  if(!stato.edit) return;
+  if(navigator.vibrate) navigator.vibrate(30);
+  $("#ce-numero").value = r.testo;
+  stato.edit.formato = r.formato === "code128" ? "code128" : "auto";
+  renderSceltaFormati(stato.edit.formato);
+  aggiornaAnteprimaCarta();
+  const box = $("#ce-anteprima").getBoundingClientRect();
+  esplosione(box.left + box.width / 2, box.top + 20);
+  messaggio("Letto! " + r.testo);
+}
+function immagineDa(src, lato){
+  const s = Math.min(1, lato / Math.max(src.width, src.height));
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(src.width * s)); c.height = Math.max(1, Math.round(src.height * s));
+  const g = c.getContext("2d", {willReadFrequently:true});
+  g.drawImage(src, 0, 0, c.width, c.height);
+  return g.getImageData(0, 0, c.width, c.height);
+}
+function leggiCodiceDaFoto(src){
+  /* piu' risoluzioni: un codice piccolo nella foto vuole piu' pixel, una foto rumorosa ne vuole meno */
+  for(const lato of [1600, 1000, 2400]){
+    const r = leggiCodice(immagineDa(src, lato));
+    if(r) return r;
+  }
+  return null;
+}
+
+let _cam = null, _camTimer = null;
+const camDisponibile = () => !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+async function apriCamera(){
+  try{
+    _cam = await navigator.mediaDevices.getUserMedia({audio:false, video:{facingMode:{ideal:"environment"}, width:{ideal:1920}, height:{ideal:1080}}});
+  }catch(_){
+    messaggio("Fotocamera non disponibile: usa \"Leggilo da una foto\"");
+    return;
+  }
+  const v = $("#cam-video");
+  v.srcObject = _cam;
+  apri("#s-camera");
+  try{ await v.play(); }catch(_){}
+  const giro = () => {
+    if(!_cam) return;
+    if(v.videoWidth){
+      const r = leggiCodice(immagineDa(v, 1280));
+      if(r){
+        /* il fotogramma diventa la foto della tessera, se non ce n'e' gia' una */
+        if(!stato.edit.foto){
+          const c = document.createElement("canvas");
+          const s = Math.min(1, 1280 / Math.max(v.videoWidth, v.videoHeight));
+          c.width = Math.round(v.videoWidth * s); c.height = Math.round(v.videoHeight * s);
+          c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+          stato.edit.foto = c.toDataURL("image/jpeg", 0.8);
+          aggiornaFotoCarta();
+        }
+        chiudi("#s-camera");
+        fermaCamera();
+        codiceLetto(r);
+        return;
+      }
+    }
+    _camTimer = setTimeout(giro, 120);
+  };
+  giro();
+}
+function fermaCamera(){
+  clearTimeout(_camTimer);
+  if(_cam){ _cam.getTracks().forEach(t => t.stop()); _cam = null; }
+  $("#cam-video").srcObject = null;
 }
 function aggiornaAnteprimaCarta(){
   const box = $("#ce-anteprima");
@@ -1761,6 +2094,7 @@ window.addEventListener("popstate", () => {
   /* indietro dal telefono: chiude l'ultima schermata aperta */
   const sel = pila.pop();
   if(sel) $(sel).hidden = true;
+  if(sel === "#s-camera") fermaCamera();
   if(!pila.length) document.body.style.overflow = "";
 });
 
@@ -2215,18 +2549,27 @@ $("#ce-formati").addEventListener("click", e => {
   stato.edit.formato = b.dataset.formato; renderSceltaFormati(b.dataset.formato); aggiornaAnteprimaCarta();
 });
 $("#ce-numero").addEventListener("input", aggiornaAnteprimaCarta);
-$("#ce-foto-scatta").addEventListener("click", () => $("#ce-foto").click());
+$("#ce-scansiona").addEventListener("click", apriCamera);
+$("#cam-annulla").addEventListener("click", () => { chiudi("#s-camera"); fermaCamera(); });
+$("#ce-da-foto").addEventListener("click", () => $("#ce-foto").click());
 $("#ce-foto").addEventListener("change", async e => {
   const f = e.target.files && e.target.files[0]; e.target.value = "";
   if(!f || !stato.edit) return;
   try{
     const bmp = await creaBitmap(f);
     stato.edit.foto = fotoCompressa(bmp, 1280, 0.8);
-    if(bmp.close) bmp.close();
     aggiornaFotoCarta();
+    const r = leggiCodiceDaFoto(bmp);
+    if(bmp.close) bmp.close();
+    if(r) codiceLetto(r);
+    else{
+      if(!$("#ce-numero").value.trim()){ stato.edit.formato = "foto"; renderSceltaFormati("foto"); aggiornaAnteprimaCarta(); }
+      messaggio("Foto salvata, ma il codice non lo trovo: scrivi il numero, o alla cassa mostra la foto");
+    }
   }catch(_){ messaggio("Non riesco a leggere la foto"); }
 });
 $("#ce-foto-togli").addEventListener("click", () => { stato.edit.foto = ""; aggiornaFotoCarta(); });
+if(!camDisponibile()) $("#ce-scansiona").hidden = true;
 
 /* coupon */
 $("#sk-modifica").addEventListener("click", () => { const c = trova(stato.aperto); if(c) apriModificaCoupon(c); });
