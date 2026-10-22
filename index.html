@@ -320,6 +320,8 @@ details.archivio[open] summary svg.i{transform:rotate(180deg)}
 }
 .o-piu svg.i{width:20px;height:20px;stroke-width:3.2}
 .o-piu.fatto{background:var(--verde)}
+.offerta.coupon-lp{border-style:dashed}
+.offerta.coupon-lp .marchio{background:#0050AA;color:#FFD600}
 .o-piu:active{transform:translate(2px,2px);box-shadow:none}
 .per-voce{margin:26px 0 12px;display:flex;align-items:center;gap:8px}
 .per-voce span{
@@ -425,6 +427,7 @@ details.archivio[open] summary svg.i{transform:rotate(180deg)}
 .schermo.bianco .meta{color:#5a5245}
 .codice-box{background:#fff;padding:18px 0 6px;text-align:center;display:flex;flex-direction:column;align-items:center}
 .codice-box svg{display:block;height:130px;max-width:100%}
+.codice-box svg.qr,.anteprima-codice svg.qr{height:auto;aspect-ratio:1;margin:0 auto}
 .numero-codice{font:800 22px/1.2 ui-monospace,"SF Mono",Menlo,monospace;letter-spacing:.12em;text-align:center;margin:12px 0 4px;word-break:break-all;color:var(--nero)}
 .luce{
   display:flex;align-items:center;justify-content:center;gap:8px;margin:12px auto 22px;font:400 16px/1 var(--fumetto);letter-spacing:.06em;
@@ -1227,6 +1230,174 @@ function codiceABarre(codice, formato){
 /* BARCODE-FINE */
 
 /* =====================================================================
+   QR CODE (per la carta Lidl Plus, che alla cassa si legge come QR)
+   Versioni 1-10, correzione M, modi numerico e byte. Schema dello standard ISO 18004.
+   ===================================================================== */
+/* QR-INIZIO */
+const QR_ECC_M = [0, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26];   // codeword di correzione per blocco
+const QR_BLOCCHI_M = [0, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5];
+function qrModuliDati(v){
+  let r = (16 * v + 128) * v + 64;
+  if(v >= 2){ const n = Math.floor(v / 7) + 2; r -= (25 * n - 10) * n - 55; if(v >= 7) r -= 36; }
+  return r;
+}
+function gfPer(x, y){
+  let z = 0;
+  for(let i = 7; i >= 0; i--){ z = (z << 1) ^ ((z >>> 7) * 0x11D); z ^= ((y >>> i) & 1) * x; }
+  return z & 0xFF;
+}
+function rsDivisore(grado){
+  const r = new Array(grado).fill(0);
+  r[grado - 1] = 1;
+  let radice = 1;
+  for(let i = 0; i < grado; i++){
+    for(let j = 0; j < r.length; j++){ r[j] = gfPer(r[j], radice); if(j + 1 < r.length) r[j] ^= r[j + 1]; }
+    radice = gfPer(radice, 0x02);
+  }
+  return r;
+}
+function rsResto(dati, div){
+  const r = div.map(() => 0);
+  for(const b of dati){
+    const f = b ^ r.shift();
+    r.push(0);
+    div.forEach((c, i) => { r[i] ^= gfPer(c, f); });
+  }
+  return r;
+}
+function qrMatrice(testo){
+  testo = String(testo);
+  const numerico = /^\d+$/.test(testo);
+  const byte = numerico ? null : Array.from(new TextEncoder().encode(testo));
+  let v = 0, bits = [];
+  const aggiungi = (val, n) => { for(let i = n - 1; i >= 0; i--) bits.push((val >>> i) & 1); };
+  for(let ver = 1; ver <= 10; ver++){
+    bits = [];
+    if(numerico){
+      aggiungi(1, 4); aggiungi(testo.length, 10);
+      for(let i = 0; i < testo.length; i += 3){ const g = testo.substr(i, 3); aggiungi(Number(g), g.length * 3 + 1); }
+    }else{
+      aggiungi(4, 4); aggiungi(byte.length, 8);
+      byte.forEach(b => aggiungi(b, 8));
+    }
+    const capacita = (Math.floor(qrModuliDati(ver) / 8) - QR_ECC_M[ver] * QR_BLOCCHI_M[ver]) * 8;
+    if(bits.length <= capacita){ v = ver; break; }
+  }
+  if(!v) return null;
+  const totali = Math.floor(qrModuliDati(v) / 8), eccLen = QR_ECC_M[v], nb = QR_BLOCCHI_M[v];
+  const capacita = (totali - eccLen * nb) * 8;
+  aggiungi(0, Math.min(4, capacita - bits.length));
+  aggiungi(0, (8 - bits.length % 8) % 8);
+  const dati = [];
+  for(let i = 0; i < bits.length; i += 8) dati.push(parseInt(bits.slice(i, i + 8).join(""), 2));
+  for(let p = 0xEC; dati.length < capacita / 8; p ^= 0xEC ^ 0x11) dati.push(p);
+  /* blocchi con la loro correzione, poi intercalati */
+  const corti = nb - totali % nb, lungCorto = Math.floor(totali / nb), div = rsDivisore(eccLen);
+  const blocchi = [];
+  for(let i = 0, k = 0; i < nb; i++){
+    const d = dati.slice(k, k + lungCorto - eccLen + (i < corti ? 0 : 1));
+    k += d.length;
+    const ecc = rsResto(d, div);
+    if(i < corti) d.push(0);
+    blocchi.push(d.concat(ecc));
+  }
+  const finale = [];
+  for(let i = 0; i < blocchi[0].length; i++) blocchi.forEach((b, j) => { if(i !== lungCorto - eccLen || j >= corti) finale.push(b[i]); });
+  /* disegno */
+  const n = v * 4 + 17;
+  const m = Array.from({length:n}, () => new Array(n).fill(false));
+  const fisso = Array.from({length:n}, () => new Array(n).fill(false));
+  const metti = (x, y, scuro) => { m[y][x] = scuro; fisso[y][x] = true; };
+  for(let i = 0; i < n; i++){ metti(6, i, i % 2 === 0); metti(i, 6, i % 2 === 0); }
+  const cercatore = (cx, cy) => {
+    for(let dy = -4; dy <= 4; dy++) for(let dx = -4; dx <= 4; dx++){
+      const d = Math.max(Math.abs(dx), Math.abs(dy)), x = cx + dx, y = cy + dy;
+      if(x >= 0 && x < n && y >= 0 && y < n) metti(x, y, d !== 2 && d !== 4);
+    }
+  };
+  cercatore(3, 3); cercatore(n - 4, 3); cercatore(3, n - 4);
+  if(v >= 2){
+    const na = Math.floor(v / 7) + 2, passo = Math.ceil((v * 4 + 4) / (na * 2 - 2)) * 2;
+    const pos = [6];
+    for(let p = n - 7; pos.length < na; p -= passo) pos.splice(1, 0, p);
+    pos.forEach((a, i) => pos.forEach((b, j) => {
+      if((i === 0 && j === 0) || (i === 0 && j === na - 1) || (i === na - 1 && j === 0)) return;
+      for(let dy = -2; dy <= 2; dy++) for(let dx = -2; dx <= 2; dx++) metti(a + dx, b + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
+    }));
+  }
+  const formato = maschera => {
+    const d = (0 << 3) | maschera;   // correzione M = 00
+    let r = d;
+    for(let i = 0; i < 10; i++) r = (r << 1) ^ ((r >>> 9) * 0x537);
+    const b = ((d << 10) | r) ^ 0x5412, bit = i => ((b >>> i) & 1) === 1;
+    for(let i = 0; i <= 5; i++) metti(8, i, bit(i));
+    metti(8, 7, bit(6)); metti(8, 8, bit(7)); metti(7, 8, bit(8));
+    for(let i = 9; i < 15; i++) metti(14 - i, 8, bit(i));
+    for(let i = 0; i < 8; i++) metti(n - 1 - i, 8, bit(i));
+    for(let i = 8; i < 15; i++) metti(8, n - 15 + i, bit(i));
+    metti(8, n - 8, true);
+  };
+  formato(0);
+  if(v >= 7){
+    let r = v;
+    for(let i = 0; i < 12; i++) r = (r << 1) ^ ((r >>> 11) * 0x1F25);
+    const b = (v << 12) | r;
+    for(let i = 0; i < 18; i++){ const s = ((b >>> i) & 1) === 1, a = n - 11 + i % 3, c = Math.floor(i / 3); metti(a, c, s); metti(c, a, s); }
+  }
+  let i = 0;
+  for(let destra = n - 1; destra >= 1; destra -= 2){
+    if(destra === 6) destra = 5;
+    for(let vert = 0; vert < n; vert++) for(let j = 0; j < 2; j++){
+      const x = destra - j, su = ((destra + 1) & 2) === 0, y = su ? n - 1 - vert : vert;
+      if(!fisso[y][x] && i < finale.length * 8){ m[y][x] = ((finale[i >>> 3] >>> (7 - (i & 7))) & 1) === 1; i++; }
+    }
+  }
+  const MASCHERE = [(x, y) => (x + y) % 2 === 0, (x, y) => y % 2 === 0, (x, y) => x % 3 === 0, (x, y) => (x + y) % 3 === 0,
+    (x, y) => (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0, (x, y) => x * y % 2 + x * y % 3 === 0,
+    (x, y) => (x * y % 2 + x * y % 3) % 2 === 0, (x, y) => ((x + y) % 2 + x * y % 3) % 2 === 0];
+  const applica = k => { for(let y = 0; y < n; y++) for(let x = 0; x < n; x++) if(!fisso[y][x] && MASCHERE[k](x, y)) m[y][x] = !m[y][x]; };
+  const penalita = () => {
+    let p = 0, scuri = 0;
+    const linee = [];
+    for(let a = 0; a < n; a++){ linee.push(m[a].map(Number).join("")); linee.push(m.map(r => Number(r[a])).join("")); }
+    for(const l of linee){
+      for(const g of l.match(/0{5,}|1{5,}/g) || []) p += g.length - 2;
+      p += 40 * ((l.match(/(?=10111010000|00001011101)/g) || []).length);
+    }
+    for(let y = 0; y < n - 1; y++) for(let x = 0; x < n - 1; x++){
+      const c = m[y][x];
+      if(c === m[y][x + 1] && c === m[y + 1][x] && c === m[y + 1][x + 1]) p += 3;
+    }
+    m.forEach(r => r.forEach(c => { if(c) scuri++; }));
+    return p + 10 * Math.max(0, Math.ceil(Math.abs(scuri * 20 - n * n * 10) / (n * n)) - 1);
+  };
+  let migliore = 0, minimo = Infinity;
+  for(let k = 0; k < 8; k++){
+    applica(k); formato(k);
+    const p = penalita();
+    if(p < minimo){ minimo = p; migliore = k; }
+    applica(k);
+  }
+  applica(migliore); formato(migliore);
+  return m;
+}
+/* SVG del QR, con il margine bianco di 4 moduli che i lettori richiedono */
+function qrSvg(testo){
+  const m = qrMatrice(testo);
+  if(!m) return null;
+  const n = m.length, q = 4, t = n + 2 * q;
+  let rects = "";
+  for(let y = 0; y < n; y++){
+    for(let x = 0; x < n;){
+      if(m[y][x]){ let j = x; while(j < n && m[y][j]) j++; rects += `<rect x="${x + q}" y="${y + q}" width="${j - x}" height="1"/>`; x = j; }
+      else x++;
+    }
+  }
+  return {svg:`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${t} ${t}" shape-rendering="crispEdges" data-moduli="${t}" class="qr"><rect width="${t}" height="${t}" fill="#fff"/><g fill="#000">${rects}</g></svg>`, moduli:t, matrice:m};
+}
+/* QR-FINE */
+
+/* =====================================================================
    LETTORE DI CODICI A BARRE (da fotocamera o foto)
    Su iPhone le pagine web non hanno un lettore pronto: questo legge EAN-13,
    EAN-8 e Code 128 passando righe orizzontali e verticali sull'immagine.
@@ -1463,7 +1634,7 @@ function leggiCodice(img){
 function adattaCodici(contenitore){
   contenitore.querySelectorAll("svg[data-moduli]").forEach(svg => {
     const m = Number(svg.dataset.moduli);
-    const disponibile = (svg.parentElement.clientWidth || 320);
+    const disponibile = Math.min(svg.parentElement.clientWidth || 320, svg.classList.contains("qr") ? 280 : 9999);
     const dpr = window.devicePixelRatio || 1;
     const px = Math.max(1, Math.floor(disponibile * dpr / m)) / dpr;
     svg.style.width = (m * px) + "px";
@@ -1503,7 +1674,7 @@ function renderDettaglioCarta(){
     html += `<div class="solo-app" style="--c:${k.c};--ct:${k.ct}">Apri l'app ${esc(k.nome === "Altro" ? "del negozio" : k.nome + (c.catena === "lidl" ? " Plus" : ""))}<small>Questa carta esiste solo dentro la sua app: alla cassa si mostra il codice da lì.</small></div>`;
     if(c.numero) html += `<p class="numero-codice">${esc(c.numero)}</p>`;
   }else if(c.numero && c.formato !== "foto"){
-    const cb = codiceABarre(c.numero, c.formato);
+    const cb = codiceCarta(c.numero, c.formato);
     if(cb){
       html += `<div class="codice-box">${cb.svg}</div><p class="numero-codice">${esc(c.numero)}</p>
         <div class="luce">${ICONA.sole}Alza la luminosità</div>`;
@@ -1526,7 +1697,11 @@ function renderSceltaCatene(box, sel){
     return `<button type="button" data-catena="${id}" class="${id === sel ? "on" : ""}" style="--c:${k.c};--ct:${k.ct}">${k.nome}</button>`;
   }).join("");
 }
-const FORMATI_CARTA = [{id:"auto", nome:"Codice a barre"}, {id:"code128", nome:"Code 128"}, {id:"solo-app", nome:"Solo app"}, {id:"foto", nome:"Solo foto"}];
+const FORMATI_CARTA = [{id:"auto", nome:"Codice a barre"}, {id:"code128", nome:"Code 128"}, {id:"qr", nome:"QR"}, {id:"solo-app", nome:"Solo app"}, {id:"foto", nome:"Solo foto"}];
+/* disegno del codice di una carta: QR o codice a barre */
+function codiceCarta(numero, formato){
+  return formato === "qr" ? qrSvg(String(numero).trim()) : codiceABarre(numero, formato);
+}
 function renderSceltaFormati(sel){
   $("#ce-formati").innerHTML = FORMATI_CARTA.map(f =>
     `<button type="button" data-formato="${f.id}" class="${f.id === sel ? "on" : ""}">${f.nome}</button>`).join("");
@@ -1628,16 +1803,21 @@ function fermaCamera(){
 function aggiornaAnteprimaCarta(){
   const box = $("#ce-anteprima");
   const f = stato.edit.formato || "auto";
-  $("#ce-campo-numero").querySelector(".etichetta").textContent = f === "solo-app" ? "Numero della carta (facoltativo)" : "Numero sotto il codice a barre";
+  $("#ce-campo-numero").querySelector(".etichetta").textContent =
+    f === "solo-app" ? "Numero della carta (facoltativo)" : f === "qr" ? "Numero della carta (quello scritto sotto il QR)" : "Numero sotto il codice a barre";
+  /* il lettore legge i codici a barre, non i QR: per una carta QR il numero si scrive */
+  $("#ce-campo-scansione").hidden = f === "qr" || f === "solo-app";
   const num = $("#ce-numero").value.replace(/\s/g, "");
   if(f === "solo-app" || f === "foto" || !num){
-    box.hidden = !(num === "" && (f === "auto" || f === "code128"));
-    box.innerHTML = `<p class="msg">Scrivi le cifre stampate sotto il codice a barre della tessera: il codice lo disegna l'app.</p>`;
+    box.hidden = !(num === "" && (f === "auto" || f === "code128" || f === "qr"));
+    box.innerHTML = f === "qr"
+      ? `<p class="msg">Scrivi il numero che l'app del negozio mostra sotto il QR: il QR lo disegna questa app, uguale.</p>`
+      : `<p class="msg">Scrivi le cifre stampate sotto il codice a barre della tessera: il codice lo disegna l'app.</p>`;
     return;
   }
-  const cb = codiceABarre(num, f);
+  const cb = codiceCarta(num, f);
   box.hidden = false;
-  box.innerHTML = cb ? cb.svg + `<p class="msg">${NOMI_FORMATO[cb.formato]}${cb.formato === "code128" && /^\d{13}$/.test(num) ? ": le 13 cifre non tornano come EAN, controlla il numero" : ""}</p>` : `<p class="msg">Numero non valido</p>`;
+  box.innerHTML = cb ? cb.svg + `<p class="msg">${f === "qr" ? "QR" : NOMI_FORMATO[cb.formato]}${cb.formato === "code128" && /^\d{13}$/.test(num) ? ": le 13 cifre non tornano come EAN, controlla il numero" : ""}</p>` : `<p class="msg">Numero non valido</p>`;
   requestAnimationFrame(() => adattaCodici(box));
 }
 async function salvaCarta(){
@@ -1746,6 +1926,14 @@ function renderCoupon(){
   html += attivi.map(c => biglietto(c)).join("");
   if(scaduti.length) html += `<h2 class="titoletto">Scaduti</h2>` + scaduti.map(c => biglietto(c)).join("");
   if(usati.length) html += `<details class="archivio"><summary><h2 class="titoletto">Già usati (${usati.length}) ${ICONA.giu}</h2></summary>${usati.map(c => biglietto(c)).join("")}</details>`;
+  /* i coupon che stanno solo nell'app Lidl Plus, letti dal giro delle offerte */
+  const lp = offerteValide().filter(o => o.coupon).sort((a, b) => Number(a.attivo) - Number(b.attivo) || String(a.al).localeCompare(String(b.al)));
+  if(lp.length){
+    const daAttivare = lp.filter(o => !o.attivo).length;
+    html += `<h2 class="titoletto">Coupon Lidl Plus (${lp.length})</h2>
+      <p class="meta" style="margin:-6px 2px 16px">${daAttivare ? daAttivare + (daAttivare === 1 ? " è da attivare" : " sono da attivare") + " nell'app Lidl Plus prima della cassa. " : "Tutti già attivi. "}Il più li mette in lista.</p>` +
+      lp.map(cartaOfferta).join("");
+  }
   $("#coupon").innerHTML = html;
 }
 function apriCoupon(c){ stato.aperto = c.id; renderDettaglioCoupon(); apri("#s-coupon"); }
@@ -1926,15 +2114,16 @@ function cartaOfferta(o){
   const futura = o.dal && o.dal > oggiIso();
   const quando = futura ? "dal " + dataLunga(o.dal) + (o.al ? " al " + dataLunga(o.al) : "") : o.al ? "fino al " + dataLunga(o.al) : "";
   const det = [o.marca && !norm(o.nome).includes(norm(o.marca)) ? o.marca : "", o.dettaglio].filter(Boolean).join(" · ");
-  return `<div class="offerta" style="--c:${k.c};--ct:${k.ct}">
-    <div class="o-img">${o.img ? `<img src="${esc(o.img)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}<span class="marchio">${esc(k.nome)}</span></div>
-    <div class="o-info"><span class="o-nome">${esc(o.nome)}</span>${det ? `<span class="o-det">${esc(det)}</span>` : ""}<span class="o-val">${esc(quando)}${o.nota ? " · " + esc(o.nota) : ""}</span></div>
+  const nota = o.coupon ? (o.attivo ? "Coupon Lidl Plus già attivo" : "Coupon Lidl Plus: attivalo nell'app Lidl") : o.nota;
+  return `<div class="offerta${o.coupon ? " coupon-lp" : ""}" style="--c:${k.c};--ct:${k.ct}">
+    <div class="o-img">${o.img ? `<img src="${esc(o.img)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}<span class="marchio">${o.coupon ? "Lidl Plus" : esc(k.nome)}</span></div>
+    <div class="o-info"><span class="o-nome">${esc(o.nome)}</span>${det ? `<span class="o-det">${esc(det)}</span>` : ""}<span class="o-val">${esc(quando)}${nota ? " · " + esc(nota) : ""}</span></div>
     <div class="o-prezzo">${o.prezzo ? `<b>${esc(o.prezzo)}</b>` : `<b>${esc(o.sconto || "Offerta")}</b>`}${o.prima ? `<s>${esc(o.prima)}</s>` : ""}${o.unitario ? `<small>${esc(o.unitario)}</small>` : ""}</div>
     ${o.sconto && o.prezzo ? `<span class="o-sconto">${esc(o.sconto)}</span>` : ""}
     <button class="o-piu${inLista ? " fatto" : ""}" data-azione="offerta-in-lista" data-oid="${esc(o.id)}" aria-label="${inLista ? "Già in lista" : "Metti in lista"}">${inLista ? ICONA.spunta : ICONA.piu}</button>
   </div>`;
 }
-function nomeNegozio(id, n){ return id === "coop" ? (n && n.nome) || "Coop" : catena(id).nome; }
+function nomeNegozio(id, n){ return id === "coop" ? (n && n.nome) || "Coop" : id === "lidlplus" ? "Coupon Lidl Plus" : catena(id).nome; }
 function renderOfferte(){
   const d = stato.offerte;
   const statoBox = $("#offerte-stato"), perTe = $("#offerte-per-te");
@@ -1952,7 +2141,8 @@ function renderOfferte(){
   const vecchie = !(giorni <= 8);
   statoBox.innerHTML = `<div class="avviso${vecchie || errori.length ? " rosso" : ""}"><div class="vai">
     <b>Volantini letti ${giorni <= 0 ? "oggi" : giorni === 1 ? "ieri" : giorni + " giorni fa"}</b>
-    ${esc(negozi.map(([id, n]) => nomeNegozio(id, n) + ": " + (n.esito === "ok" ? (n.quante || 0) + " offerte" : "non letto, restano le offerte di prima")).join(" · "))}
+    ${esc(negozi.map(([id, n]) => nomeNegozio(id, n) + ": " + (n.esito === "ok" ? (n.quante || 0) + (id === "lidlplus" ? " coupon" : " offerte")
+      : n.esito === "collegamento scaduto" ? "collegamento scaduto, va rifatto (scripts/lidl/collega_lidl.py)" : "non letto, restano quelli di prima")).join(" · "))}
     ${vecchie ? "<br>Il giro delle offerte non gira da più di una settimana." : ""}</div></div>`;
   let html = "";
   const gruppi = vociInOfferta().map(v => ({v, os:offerteMemo(v.testo).slice(0, 3)}));
@@ -2539,8 +2729,9 @@ $("#ce-catene").addEventListener("click", e => {
   const nome = $("#ce-nome").value.trim();
   if(!nome || nome === prima.carta) $("#ce-nome").value = dopo.carta;
   stato.edit.catena = b.dataset.catena;
-  if(b.dataset.catena === "lidl" && !$("#ce-numero").value.trim()){ stato.edit.formato = "solo-app"; renderSceltaFormati("solo-app"); }
-  else if(prima === CATENE.lidl && stato.edit.formato === "solo-app"){ stato.edit.formato = "auto"; renderSceltaFormati("auto"); }
+  /* la carta Lidl Plus alla cassa e' un QR col numero della carta */
+  if(b.dataset.catena === "lidl"){ stato.edit.formato = "qr"; renderSceltaFormati("qr"); }
+  else if(prima === CATENE.lidl && (stato.edit.formato === "qr" || stato.edit.formato === "solo-app")){ stato.edit.formato = "auto"; renderSceltaFormati("auto"); }
   renderSceltaCatene($("#ce-catene"), b.dataset.catena);
   aggiornaAnteprimaCarta();
 });

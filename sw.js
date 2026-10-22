@@ -1,6 +1,6 @@
 /* Service worker: rende l'app apribile anche senza rete.
    CACHE_VERSION va incrementata a ogni pubblicazione (lo fa deploy.sh). */
-const CACHE_VERSION = "spesa-v3";
+const CACHE_VERSION = "spesa-v4";
 const FILE = [
   "./",
   "./index.html",
